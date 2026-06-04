@@ -1,410 +1,164 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Modern Login & Signup</title>
+const express = require('express');
+const mysql = require('mysql2/promise');
+const bcrypt = require('bcryptjs');
+const cors = require('cors');
+const path = require('path');
 
-<style>
-*{
-    margin:0;
-    padding:0;
-    box-sizing:border-box;
-    font-family:'Segoe UI',sans-serif;
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static(__dirname));
+
+// Serve index.html on root path
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// ✅ MySQL Connection Pool — uses ENV variables (set these in Render Dashboard)
+const pool = mysql.createPool({
+  host:     process.env.DB_HOST     || 'acela.proxy.rlwy.net',
+  user:     process.env.DB_USER     || 'root',
+  password: process.env.DB_PASSWORD || 'xNgNVtDcopUASPgXzzIyCWwEwkgFQCOO',
+  database: process.env.DB_NAME     || 'railway',
+  port:     parseInt(process.env.DB_PORT || '13278'),
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// ✅ Auto-create users table if it doesn't exist
+async function initDB() {
+  try {
+    const connection = await pool.getConnection();
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        gender VARCHAR(20),
+        date_of_birth DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    connection.release();
+    console.log('✅ Database connected and table ready.');
+  } catch (err) {
+    console.error('❌ DB init error:', err.message);
+  }
 }
+initDB();
 
-body{
-    height:100vh;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    background:linear-gradient(
-        135deg,
-        #667eea,
-        #764ba2,
-        #6a11cb,
-        #2575fc
-    );
-    background-size:400% 400%;
-    animation:gradientMove 12s ease infinite;
-    overflow:auto;
-    padding:20px 0;
-}
+// ============ SIGNUP ROUTE ============
+app.post('/auth/register', async (req, res) => {
+  try {
+    const { name, email, password, confirmPassword, gender, dateOfBirth } = req.body;
 
-@keyframes gradientMove{
-    0%{background-position:0% 50%;}
-    50%{background-position:100% 50%;}
-    100%{background-position:0% 50%;}
-}
-
-.container{
-    width:400px;
-    backdrop-filter:blur(15px);
-    background:rgba(255,255,255,0.1);
-    border:1px solid rgba(255,255,255,0.2);
-    box-shadow:0 8px 32px rgba(0,0,0,0.2);
-    border-radius:20px;
-    padding:35px;
-    color:white;
-    margin:auto;
-}
-
-.form-box{
-    display:none;
-}
-
-.form-box.active{
-    display:block;
-}
-
-h2{
-    text-align:center;
-    margin-bottom:25px;
-    font-size:2rem;
-}
-
-.input-group{
-    margin-bottom:18px;
-}
-
-.input-group label{
-    display:block;
-    margin-bottom:6px;
-    font-size:13px;
-    color:rgba(255,255,255,0.8);
-}
-
-.input-group input,
-.input-group select{
-    width:100%;
-    padding:14px;
-    border:none;
-    outline:none;
-    border-radius:10px;
-    background:rgba(255,255,255,0.15);
-    color:white;
-    font-size:15px;
-}
-
-.input-group input::placeholder{
-    color:rgba(255,255,255,0.7);
-}
-
-.input-group select option{
-    color:black;
-}
-
-.btn{
-    width:100%;
-    padding:14px;
-    border:none;
-    border-radius:10px;
-    cursor:pointer;
-    font-size:16px;
-    font-weight:bold;
-    background:white;
-    color:#6a11cb;
-    transition:.3s;
-}
-
-.btn:hover{
-    transform:translateY(-3px);
-    box-shadow:0 5px 15px rgba(255,255,255,.3);
-}
-
-.btn:disabled{
-    opacity:0.6;
-    cursor:not-allowed;
-}
-
-.switch{
-    text-align:center;
-    margin-top:20px;
-}
-
-.switch a{
-    color:#fff;
-    font-weight:bold;
-    text-decoration:none;
-    cursor:pointer;
-}
-
-.switch a:hover{
-    text-decoration:underline;
-}
-
-.message{
-    text-align:center;
-    margin-top:15px;
-    font-size:14px;
-    padding:10px;
-    border-radius:8px;
-}
-
-.message.success{
-    color:#00ff00;
-    background:rgba(0,255,0,0.1);
-}
-
-.message.error{
-    color:#ff6b6b;
-    background:rgba(255,107,107,0.1);
-}
-
-@media(max-width:500px){
-    .container{
-        width:90%;
-        padding:25px;
-    }
-}
-</style>
-</head>
-<body>
-
-<div class="container">
-
-    <!-- Login Form -->
-    <div class="form-box active" id="loginForm">
-        <h2>Login</h2>
-
-        <div class="input-group">
-            <label>Email Address</label>
-            <input type="email" id="loginEmail" placeholder="Enter your email" required>
-        </div>
-
-        <div class="input-group">
-            <label>Password</label>
-            <input type="password" id="loginPassword" placeholder="Enter your password" required>
-        </div>
-
-        <button class="btn" id="loginBtn" onclick="handleLogin()">Login</button>
-
-        <div class="message" id="loginMessage"></div>
-
-        <div class="switch">
-            Don't have an account?
-            <a onclick="showSignup()">Sign Up</a>
-        </div>
-    </div>
-
-    <!-- Signup Form -->
-    <div class="form-box" id="signupForm">
-        <h2>Create Account</h2>
-
-        <div class="input-group">
-            <label>Full Name</label>
-            <input type="text" id="signupName" placeholder="Enter your name" required>
-        </div>
-
-        <div class="input-group">
-            <label>Email Address</label>
-            <input type="email" id="signupEmail" placeholder="Enter your email" required>
-        </div>
-
-        <div class="input-group">
-            <label>Gender</label>
-            <select id="signupGender">
-                <option value="">Select Gender</option>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Other">Other</option>
-            </select>
-        </div>
-
-        <div class="input-group">
-            <label>Date of Birth</label>
-            <input type="date" id="signupDOB">
-        </div>
-
-        <div class="input-group">
-            <label>Password</label>
-            <input type="password" id="signupPassword" placeholder="Minimum 6 characters" required>
-        </div>
-
-        <div class="input-group">
-            <label>Confirm Password</label>
-            <input type="password" id="signupConfirmPassword" placeholder="Re-enter your password" required>
-        </div>
-
-        <button class="btn" id="signupBtn" onclick="handleSignup()">Sign Up</button>
-
-        <div class="message" id="signupMessage"></div>
-
-        <div class="switch">
-            Already have an account?
-            <a onclick="showLogin()">Login</a>
-        </div>
-    </div>
-
-</div>
-
-<script>
-
-// API BASE URL
-const API_URL =  window.location.origin
-
-// Toggle between Login and Signup
-function showSignup(){
-    document.getElementById("loginForm").classList.remove("active");
-    document.getElementById("signupForm").classList.add("active");
-    clearMessages();
-}
-
-function showLogin(){
-    document.getElementById("signupForm").classList.remove("active");
-    document.getElementById("loginForm").classList.add("active");
-    clearMessages();
-}
-
-// Clear all messages
-function clearMessages(){
-    document.getElementById("loginMessage").innerHTML = "";
-    document.getElementById("signupMessage").innerHTML = "";
-}
-
-// Handle Signup
-async function handleSignup(){
-    const name = document.getElementById("signupName").value.trim();
-    const email = document.getElementById("signupEmail").value.trim();
-    const password = document.getElementById("signupPassword").value;
-    const confirmPassword = document.getElementById("signupConfirmPassword").value;
-    const gender = document.getElementById("signupGender").value;
-    const dateOfBirth = document.getElementById("signupDOB").value;
-
-    const messageEl = document.getElementById("signupMessage");
-    const btnEl = document.getElementById("signupBtn");
-
-    // Validation
     if (!name || !email || !password || !confirmPassword) {
-        showMessage(messageEl, "All fields are required!", "error");
-        return;
+      return res.status(400).json({ success: false, message: 'All fields are required' });
     }
-
     if (password !== confirmPassword) {
-        showMessage(messageEl, "Passwords do not match!", "error");
-        return;
+      return res.status(400).json({ success: false, message: 'Passwords do not match' });
     }
-
     if (password.length < 6) {
-        showMessage(messageEl, "Password must be at least 6 characters!", "error");
-        return;
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
     }
 
-    // Disable button while processing
-    btnEl.disabled = true;
-    btnEl.textContent = "Creating Account...";
-
+    const connection = await pool.getConnection();
     try {
-        const response = await fetch(`${API_URL}/auth/register`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                name,
-                email,
-                password,
-                confirmPassword,
-                gender,
-                dateOfBirth
-            })
-        });
+      const [users] = await connection.query('SELECT email FROM users WHERE email = ?', [email]);
+      if (users.length > 0) {
+        return res.status(400).json({ success: false, message: 'Email already in use' });
+      }
 
-        const data = await response.json();
+      const hashedPassword = await bcrypt.hash(password, 8);
+      await connection.query(
+        'INSERT INTO users (name, email, password, gender, date_of_birth) VALUES (?, ?, ?, ?, ?)',
+        [name, email, hashedPassword, gender || null, dateOfBirth || null]
+      );
 
-        if (data.success) {
-            showMessage(messageEl, data.message, "success");
-            // Clear form
-            document.getElementById("signupName").value = "";
-            document.getElementById("signupEmail").value = "";
-            document.getElementById("signupPassword").value = "";
-            document.getElementById("signupConfirmPassword").value = "";
-            document.getElementById("signupGender").value = "";
-            document.getElementById("signupDOB").value = "";
-            
-            // Switch to login after 2 seconds
-            setTimeout(() => {
-                showLogin();
-            }, 2000);
-        } else {
-            showMessage(messageEl, data.message, "error");
-        }
-
-    } catch (error) {
-        console.error('Error:', error);
-        showMessage(messageEl, "Network error. Make sure server is running!", "error");
+      return res.status(201).json({ success: true, message: 'Account created! Please login.' });
     } finally {
-        btnEl.disabled = false;
-        btnEl.textContent = "Sign Up";
+      connection.release();
     }
-}
+  } catch (error) {
+    console.error('Registration error:', error);
+    return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
+  }
+});
 
-// Handle Login
-async function handleLogin(){
-    const email = document.getElementById("loginEmail").value.trim();
-    const password = document.getElementById("loginPassword").value;
-
-    const messageEl = document.getElementById("loginMessage");
-    const btnEl = document.getElementById("loginBtn");
-
-    // Validation
+// ============ LOGIN ROUTE ============
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
     if (!email || !password) {
-        showMessage(messageEl, "Email and password are required!", "error");
-        return;
+      return res.status(400).json({ success: false, message: 'Email and password required' });
     }
 
-    // Disable button while processing
-    btnEl.disabled = true;
-    btnEl.textContent = "Logging in...";
-
+    const connection = await pool.getConnection();
     try {
-        const response = await fetch(`${API_URL}/auth/login`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                email,
-                password
-            })
-        });
+      const [users] = await connection.query('SELECT * FROM users WHERE email = ?', [email]);
+      if (users.length === 0) {
+        return res.status(401).json({ success: false, message: 'Email not found' });
+      }
 
-        const data = await response.json();
+      const user = users[0];
+      const isPasswordCorrect = await bcrypt.compare(password, user.password);
+      if (!isPasswordCorrect) {
+        return res.status(401).json({ success: false, message: 'Password is incorrect' });
+      }
 
-        if (data.success) {
-            showMessage(messageEl, `Welcome back, ${data.user.name}!`, "success");
-            // Store user info in localStorage
-            localStorage.setItem('user', JSON.stringify(data.user));
-            
-            // Clear form
-            document.getElementById("loginEmail").value = "";
-            document.getElementById("loginPassword").value = "";
-
-            // Redirect after 1.5 seconds (change URL as needed)
-            setTimeout(() => {
-                alert('Login successful! Redirecting to dashboard...');
-                // window.location.href = '/dashboard'; // Uncomment when you have a dashboard
-            }, 1500);
-        } else {
-            showMessage(messageEl, data.message, "error");
-        }
-
-    } catch (error) {
-        console.error('Error:', error);
-        showMessage(messageEl, "Network error. Make sure server is running!", "error");
+      return res.status(200).json({
+        success: true,
+        message: 'Login successful!',
+        user: { id: user.id, name: user.name, email: user.email }
+      });
     } finally {
-        btnEl.disabled = false;
-        btnEl.textContent = "Login";
+      connection.release();
     }
-}
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
+  }
+});
 
-// Helper function to show messages
-function showMessage(element, text, type){
-    element.innerHTML = text;
-    element.className = `message ${type}`;
-}
+// ============ GET ALL USERS ============
+app.get('/auth/users', async (req, res) => {
+  try {
+    const connection = await pool.getConnection();
+    try {
+      const [users] = await connection.query('SELECT id, name, email, gender, date_of_birth, created_at FROM users');
+      res.status(200).json({ success: true, data: users });
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
-</script>
+// ============ DELETE USER ============
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false });
+  }
+});
 
-</body>
-</html>
+// ✅ Keep-alive ping endpoint (used by UptimeRobot to prevent Render sleeping)
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+// ✅ Start server — must bind to 0.0.0.0 for Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
